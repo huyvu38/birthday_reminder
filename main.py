@@ -2,28 +2,63 @@ from fastapi import FastAPI, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from datetime import date, timedelta, datetime
+import json
 
-app = FastAPI(title="Birthday Calendar API", description="Manage and view birthdays.")
+app = FastAPI(
+    title="Birthday Calendar API",
+    description="Manage and view birthdays."
+)
 
-# In-memory database
-birthday_db: List[dict] = []
-
-# Pydantic model
 class Birthday(BaseModel):
     name: str
     birthday: date
     message: Optional[str] = None
 
-# Add a birthday
+birthday_db: List[dict] = []
+
+# Load data
+try:
+    with open("birthdays.json", "r") as f:
+        raw_data = json.load(f)
+        birthday_db = [
+            {
+                "name": entry["name"],
+                "birthday": datetime.strptime(entry["birthday"], "%Y-%m-%d").date(),
+                "message": entry.get("message")
+            }
+            for entry in raw_data
+        ]
+except FileNotFoundError:
+    print("Empty list.")
+
+
+# Root route
+@app.get("/")
+def root():
+    return {"message": "🎉 Birthday API is up and running!"}
+
+
+# Add a new birthday and save it
 @app.post("/birthdays/", response_model=Birthday)
 def add_birthday(entry: Birthday):
     birthday_db.append(entry.dict())
+
+    # Save to file
+    with open("birthdays.json", "w") as f:
+        json.dump(
+            [dict(e) for e in birthday_db],
+            f,
+            indent=2,
+            default=str
+        )
     return entry
+
 
 # Get all birthdays
 @app.get("/birthdays/", response_model=List[Birthday])
 def get_all_birthdays():
     return birthday_db
+
 
 # Get upcoming birthdays (within X days)
 @app.get("/birthdays/upcoming", response_model=List[Birthday])
@@ -36,7 +71,7 @@ def get_upcoming_birthdays(days: int = Query(7, ge=1, le=365)):
         b_date = entry["birthday"]
         b_this_year = b_date.replace(year=today.year)
 
-        # Handle birthdays already passed this year
+        # If birthday already passed this year, move to next year
         if b_this_year < today:
             b_this_year = b_this_year.replace(year=today.year + 1)
 
@@ -44,6 +79,7 @@ def get_upcoming_birthdays(days: int = Query(7, ge=1, le=365)):
             upcoming_birthdays.append(entry)
 
     return upcoming_birthdays
+
 
 # Search birthdays by day, month, or year
 @app.get("/birthdays/search", response_model=List[Birthday])
@@ -57,7 +93,6 @@ def search_birthdays(
     for entry in birthday_db:
         b_date = entry["birthday"]
 
-        # Check each filter condition
         if day and b_date.day != day:
             continue
         if month and b_date.month != month:
